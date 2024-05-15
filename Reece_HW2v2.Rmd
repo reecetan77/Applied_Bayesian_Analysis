@@ -1,0 +1,268 @@
+---
+title: "Reece_HW1"
+author: "Tanner Reece"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+library(tidyverse)
+library(brms)
+library(knitr)
+library(rstatix)
+library(effectsize)
+library(tidybayes)
+library(modelr)
+library(formatR)
+library(modeldb)
+library(emmeans)
+library(cowplot)
+library(knitr)
+library(cmdstanr)
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 100), tidy = TRUE)
+```
+
+
+```{r}
+set.seed(74)
+dat <- tibble(
+  a = rep(0:1,each=150),
+  b = as.factor(rep(rep(0:2,each=1),100)))
+
+dat <- dat %>% 
+  add_dummy_variables(b, values = c(0,1,2), remove_original=F)
+
+y = 2 + rnorm(300,.7,.5)*dat$a + rnorm(300,.9,.5)*dat$b_1 +  rnorm(300,-.8,.5)*dat$b_2 + rnorm(300,.1,.5)*dat$a*dat$b_1 + rnorm(300,.19,.5)*dat$a*dat$b_2 + rnorm(300,0,.5)
+
+dat <- dat %>% add_column(y)
+```
+
+# 1) Run a full factorial interaction model using brms with the above'dat' dataset.
+# Interpret the summary output.
+```{r}
+# dat$a <- dat$a %>% dplyr::recode("0" = "1","1" = "2")
+# dat$b <- dat$b %>% dplyr::recode("0" = "3")
+dat$a <- dat$a %>% as.factor()
+
+mod1 <- brm(family = gaussian,
+             y ~ 0 + a:b,
+             prior = c(prior(normal(0,5), class = b),
+                       prior(cauchy(0,10), class = sigma)),
+             data = dat,
+             iter = 1000, warmup = 500, chains = 2, cores = 2,
+            backend="cmdstanr")
+
+
+summary(mod1)
+prior_summary(mod1)
+#Coefficient Interpretation
+#The coefficients represent the cell means for each a/b combination and the sigma_ variables represent the estimated residual variances for each cell mean
+```
+
+# 2) Graph
+
+## 2a) The two simple main effects
+```{r}
+plot_grid(
+  emmeans(mod1, ~a) %>% 
+  gather_emmeans_draws() %>% 
+  ggplot(aes(x = a, y = .value))+
+  stat_eye(fill="blue") +
+  stat_summary(aes(group = NA), fun.y = mean, geom="line"),
+
+emmeans(mod1, ~b) %>% 
+  gather_emmeans_draws() %>% 
+  ggplot(aes(x = b, y = .value))+
+  stat_eye(fill="red") +
+  stat_summary(aes(group = NA), fun.y = mean, geom="line"),
+
+nrow=1,ncol=2
+)
+
+```
+
+## 2b) A figure to demonstrate the interaction effects
+```{r}
+emmeans(mod1, ~ a:b) %>% 
+  gather_emmeans_draws() %>% 
+  ggplot(aes(x = a, y = .value,fill=b))+
+  stat_eye()+
+  stat_summary(aes(group = b), fun.y = mean, geom="line")
+```
+
+## 2c) The differences/contrasts between the simple main effects
+```{r}
+mod1 %>% 
+emmeans(~a) %>% 
+  contrast(method = "pairwise") %>% 
+  gather_emmeans_draws() %>% 
+  ggplot(aes(y = contrast, x = .value))+
+  stat_halfeye(fill="blue", alpha = 0.5)
+
+mod1 %>% 
+emmeans(~b) %>% 
+  contrast(method = "pairwise") %>% 
+  gather_emmeans_draws() %>% 
+  ggplot(aes(y = contrast,x=.value))+
+  stat_halfeye(aes(fill=contrast), alpha = 0.5)+
+  theme(legend.position="NULL")
+
+```
+
+## 2d) The differences/contrasts betwen each cell
+```{r}
+#All possible cell pairs
+mod1 %>% 
+emmeans(~a:b) %>% contrast(method="pairwise") %>% 
+  gather_emmeans_draws() %>% 
+  ggplot(aes(x = .value, y = contrast, fill = contrast)) +
+  stat_halfeye(aes(fill=contrast), alpha = 0.5)+
+  theme(legend.position="NULL")
+
+#We can also look at the simple effects
+#a1-a0 @ each level of b
+mod1 %>% 
+emmeans(~a|b) %>% contrast(method="pairwise",simple="each") %>% 
+  gather_emmeans_draws() %>% 
+  filter(.grid == 'simple contrasts for a') %>% 
+  ggplot(aes(x = -1*.value, y = b, fill = b)) +
+  stat_halfeye(aes(fill=b), alpha = 0.5)+
+  xlab('a1-a0')+
+  ggtitle('a1 - a0 at each level of b')+
+  theme(legend.position="NULL")
+
+#and b1 - b0, b2 - b0, and b2 - b1 @ each level of a
+mod1 %>% 
+emmeans(~a|b) %>% contrast(method="pairwise",simple="each") %>% 
+  gather_emmeans_draws() %>% 
+  filter(.grid == 'simple contrasts for b') %>% 
+  dplyr::select(-b,-.chain,-.iteration) %>% 
+  ggplot(aes(x = .value, y = contrast, fill = contrast)) +
+  facet_wrap(~a) +
+  stat_halfeye(aes(fill=contrast), alpha = 0.5)+
+  theme(legend.position="NULL")
+```
+
+## 2f) A plot (your choice) but with standardized, not raw values
+
+```{r}
+# mod1 %>% 
+#   spread_draws(b_a0:b0,b_a1:b0,sigma) %>% 
+#   select(b_a0,b_a1,sigma) %>% 
+#   rename(a0 = "b_a0", a1 = "b_a1") %>% 
+#   mutate(std.effect = (a1-a0)/sigma) %>% 
+#   ggplot(aes(x = std.effect))+
+#   ylab(NULL)+
+#   ggtitle("Cohen's d for a1 - a0 contrast")+
+#   stat_dotsinterval()+
+#   theme(axis.text.y=element_blank())
+
+draws <- mod1 %>% 
+  tidy_draws() 
+
+draws$a0 <- rowMeans(draws[,c(4,6,8)], na.rm=TRUE)
+draws$a1 <- rowMeans(draws[,c(5,7,9)], na.rm=TRUE)
+draws %>% mutate(std.effect = (a1-a0)/sigma) %>% 
+  ggplot(aes(x = std.effect))+
+  ylab(NULL)+
+  ggtitle("Cohen's d for a1 - a0 contrast")+
+  stat_dotsinterval()+
+  theme(axis.text.y=element_blank())
+
+```
+
+# 3) Test. Use a 97% CI
+
+## 3a) What are the medians and the 97% CIs for the simple main effect estimates
+
+```{r}
+mod1 %>% 
+emmeans(~a) %>% 
+  gather_emmeans_draws() %>% 
+  median_qi(.width = 0.97)
+
+#Median and 97% CIs:
+#a0 = 2.02 (1.88,2.16)
+#a1 = 2.95 (2.82, 3.09)
+
+mod1 %>% 
+emmeans(~b) %>% 
+  gather_emmeans_draws() %>% 
+  median_qi(.width = 0.97) 
+
+#Median and 97% CIs:
+#b0 = 2.36 (2.18,2.52)
+#b1 = 3.37 (3.20, 3.55)
+#b2 = 1.71 (1.54, 1.90)
+
+```
+
+## 3b) What are the medians and the 97% CIs for each of the cell estimates?
+```{r}
+mod1 %>% 
+emmeans(~a:b) %>% 
+  gather_emmeans_draws() %>% 
+  median_qi(.width = 0.97)
+
+#Median and 97% CIs:
+#a0b0 = 2.15 (1.89,2.39)
+#a0b1 = 2.76 (2.51,3.03)
+#a0b2 = 1.15 (0.91,1.39)
+#a1b0 = 2.57 (2.36,2.80)
+#a1b1 = 3.99 (3.75,4.26)
+#a1b2 = 2.28 (2.03,2.51)
+
+```
+
+## 3c) Are any of the simple effects significantly different from one another
+
+```{r}
+#Main effect of a is significant. a0 - a1 -> -0.93 (-1.12,-0.72)
+mod1 %>% 
+emmeans(~a) %>% contrast(method="pairwise") %>%
+  gather_emmeans_draws() %>% 
+  median_qi(.width = 0.97)
+
+
+
+
+mod1 %>% 
+emmeans(~b) %>% contrast(method="pairwise") %>%
+  gather_emmeans_draws() %>% 
+  median_qi(.width = 0.97)
+#b0-b1 -> -1.02 (-1.3,-0.78)
+#b0-b2 -> 0.64 (0.39, 0.88)
+#b1-b2 -> 1.66 (1.41,1.93)
+#All pairwise comparisons within b are significant
+                           
+```
+
+## 3d) Are any of the cell comparisons significantly different from one another?
+```{r}
+#We can look at all possible contrasts
+
+mod1 %>% 
+emmeans(~a:b) %>% contrast(method="pairwise") %>%
+  gather_emmeans_draws() %>% 
+  median_qi(.width = 0.97)
+
+
+#Or simple contrasts
+#All simple effects are significant EXCEPT b0 - b2 @ a = 1
+mod1 %>% 
+emmeans(~a:b) %>% contrast(method="pairwise",simple="each") %>%
+  gather_emmeans_draws() %>% 
+  median_qi(.width = 0.97)
+                           
+```
+# 4) Interpet the R2
+```{r}
+bayes_R2(mod1,summary=F) %>% as.data.frame() %>% 
+  ggplot(aes(x = R2))+
+  stat_dotsinterval()
+
+bayes_R2(mod1,summary=T)
+#~52.4% of the variance in y is explained by our predictors
+```

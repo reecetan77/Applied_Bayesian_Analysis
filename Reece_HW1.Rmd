@@ -1,0 +1,354 @@
+---
+title: "Reece_HW1"
+author: "Tanner Reece"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+library(tidyverse)
+library(rstan)
+library(brms)
+library(knitr)
+library(rstatix)
+library(effectsize)
+library(tidybayes)
+library(modelr)
+library(formatR)
+knitr::opts_knit$set(root.dir = "/Users/Tanner/Library/CloudStorage/Box-Box/SNR Lab/Tanner AnkleCoherence/MFR, TQ, and COVs Data")
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 100), tidy = TRUE)
+
+
+```
+
+# 1) Plot 2 versions of each of the following distributions...
+
+## 1a) t-distribution
+
+```{r}
+# 10 dof and 100 dof
+x = seq(-10,10,0.01)
+  ggplot(data=data.frame(x = rep(x,2),
+                       t = c(dt(x,10),dt(x,100)),
+                       dof = factor(c(rep("10",length(x)),rep("100",length(x))))))+
+  ggtitle("t Distributions")+
+  geom_line(aes(x=x,y=t,color=dof))+
+  theme_classic()
+                                      
+```
+
+## 1b) Beta Distribution
+
+```{r}
+# alpha = beta = 0.5; alpha = 0.75, beta = 0.4
+x2 = seq(0,1,0.001)
+  ggplot(data=data.frame(x = rep(x2,2),
+                       beta = c(dbeta(x2,0.5,0.5),dbeta(x2,0.75,0.4)),
+                       shape_param = factor(c(rep(1,length(x2)),
+                                              rep(2,length(x2))))))+
+  ylab("Beta Density")+
+  ggtitle("Beta Distributions")+
+  geom_line(aes(x=x,y=beta,color=shape_param))+
+  scale_color_discrete(name= "Shape Parameters",
+  labels=c(expression(paste(alpha," = ", beta, " = 0.5")),
+  expression(paste(alpha, " = 0.75; ",beta," = 0.4"))))+
+  theme_classic()
+```
+
+## 1c) Cauchy Distribution
+
+```{r}
+x3 = seq(-10,10,0.01)
+ggplot(data=data.frame(x = rep(x3,2),
+                       cauchy = c(dcauchy(x3,0,1),dcauchy(x3,5,0.5)),
+                       shape_param = factor(c(rep(1,length(x3)),
+                                              rep(2,length(x3))))))+
+  geom_line(aes(x=x,y=cauchy,color=shape_param))+
+  ggtitle("Cauchy Distributions")+
+  scale_color_discrete(name= "Parameters",
+                                labels=c(expression(paste(location, " = 0; ",scale," = 1.0")),
+                                expression(paste(location, " = 5; ",scale," = 0.5"))))+
+  theme_classic()
+```
+
+## 1d) Gamma Distribution
+
+```{r}
+x4 = seq(0,20,0.01)
+ggplot(data=data.frame(x = rep(x4,2),
+                       gamma = c(dgamma(x4,5,2),dgamma(x4,3,4)),
+                       shape_param = factor(c(rep(1,length(x4)),
+                                              rep(2,length(x4))))))+
+  geom_line(aes(x=x,y=gamma,color=shape_param))+
+  ggtitle("Gamma Distributions")+
+  scale_color_discrete(name= "Parameters",
+                                labels=c(expression(paste("shape = 5; scale = 2")),
+                                expression(paste("shape = 3; scale = 4"))))+
+  theme_classic()
+```
+
+## 1e) Exponential Distribution
+
+```{r}
+x5 = seq(0,5,0.01)
+ggplot(data=data.frame(x = rep(x5,2),
+                       exp = c(dexp(x5,3),dexp(x5,5)),
+                       shape_param = factor(c(rep(1,length(x5)),
+                                              rep(2,length(x5))))))+
+  geom_line(aes(x=x,y=exp,color=shape_param))+
+  ggtitle("Exponential Distributions")+
+  scale_color_discrete(name= "Parameters",
+                                labels=c(expression(paste("rate = 3")),
+                                expression(paste("rate = 5"))))+
+  theme_classic()
+```
+
+## 1e) Uniform Distributions
+
+```{r}
+x6 = seq(-10,10,0.01)
+ggplot(data=data.frame(x = rep(x6,2),
+                       density = c(dunif(x6,-5,5),dunif(x6,-8,8)),
+                       shape_param = factor(c(rep(1,length(x6)),
+                                              rep(2,length(x6))))))+
+  geom_line(aes(x=x,y=density,color=shape_param))+
+  ggtitle("Uniform Distributions")+
+  scale_color_discrete(name= "Parameters",
+                                labels=c(expression(paste("a = -5; b = 5")),
+                                expression(paste("a = -8; b = 8"))))+
+  theme_classic()
+```
+
+# 2) Priors
+
+## Based on what you know about the normal distribution and your substantive area of research, please describe two types of priors you might put around one of your recent analyses or a future one. First, briefly describe what your parameter you want to estimate is (eg comparison of two groups with a regression coefficient) and the corresponding effect size you found for that parameter (eg d =.3).
+
+```{r}
+#Our lab investigates neuromuscular physiology by analyzing motor unit firing #patterns. A motor unit is defined as a single motoneuron and the group of muscle #fibers it innervates. Differences in biomechanical function and muscle #architecture can lead to motor units of different muscles exhibiting different #mean firing rates during steady muscular contractions at similar levels of #effort. A current manuscript we are writing is interested in differences in #neural control between two different muscles of the lower limb (TA and SOL) that #play different roles in gait and posture. For this homework, I will examine #differences in mean firing rates between these two muscles. I will use a simple #regression coefficient to estimate this difference.
+
+
+data <-read.csv("MFR,TQ,COVs.csv",header=FALSE)
+names(data) <- c("MFR","Muscle","Trial","SubID","Variable")
+mfr_data <- data %>% filter(Variable == "MFR") %>% dplyr::select(MFR,Muscle,SubID) 
+mfr_data <- mfr_data %>% filter(MFR < 21)
+
+mfr_data$Muscle <- mfr_data$Muscle %>% dplyr::recode(MLSOL = "SOL") 
+
+
+rstatix::cohens_d(mfr_data, formula = MFR~Muscle, paired=FALSE)$effsize
+mfr_data %>% group_by(Muscle) %>% dplyr::summarize(mean_mfr = mean(MFR))
+ta_mfr <- mfr_data %>% filter(Muscle == "TA")
+sol_mfr <- mfr_data %>% filter(Muscle == "SOL")
+sd_pooled(ta_mfr$MFR,sol_mfr$MFR)
+```
+
+## Then describe:
+
+## 2a) a prior distribution that represents your "best guess" for the parameter if you replicated this study. This is an "informed" prior. Bonus points for plotting the distribution.
+
+```{r}
+#Based on the effect size and mean difference from our 
+#sample data, I would utilize a normally distributed prior 
+#with a mean 4.91 and a sd of 1.73
+x7 <- seq(-15,25,0.01)
+ggplot(data = data.frame(x = x7, y = dnorm(x7, mean = 4.91, sd = 1.73)))+
+  geom_line(aes(x=x,y=y))+
+  ggtitle(expression(paste("Informed Prior,mu ~ dnorm(4.91,1.73)")))
+
+# b.fit <- brm(MFR ~ 1 + Muscle, data = mfr_data, file = "b.fit.1")
+# summary(b.fit)
+# prior_summary(b.fit)
+```
+
+## 2b) a prior distribution that would serve to regularize the data i.e. a weakly informative prior.
+
+```{r}
+#A weakly informative prior that just serves to regularize the 
+#data could estimate a normal distribution with a mean of zero and an sd of 5.
+x8 <- seq(-10,10,0.01)
+ggplot(data = data.frame(x = x8, y = dnorm(x8, mean = 0, sd = 5)))+
+  geom_line(aes(x=x,y=y))+
+  ggtitle(expression(paste("Weakly Informative Prior,mu ~ dnorm(0,5)")))
+
+
+```
+
+# 3) Run a simple regression using your own data using:
+
+## 3a) lm function
+
+```{r}
+lm.fit.1 <- lm(MFR ~ 1 + Muscle, data=mfr_data)
+summary(lm.fit.1)
+```
+
+## 3b) brms and meaningful (to you) priors
+
+```{r}
+b.fit.1 <- brm(family = gaussian,
+               MFR~1+Muscle,data=mfr_data,
+               prior = c(prior(normal(7,3), class = Intercept),
+                       prior(normal(4.9,1.7), class = b),
+                       prior(cauchy(0,1), class = sigma)),
+               iter = 1000, warmup = 500, chains = 2, cores = 2)
+
+summary(b.fit.1)
+prior_summary(b.fit.1)
+```
+
+# 4) For the brms model, graph the posterior of your predictor. Interpret and compare with the the lm results.
+
+```{r}
+plot(b.fit.1)
+
+b.fit.1 %>% spread_draws(b_Intercept, b_MuscleTA) %>% 
+  ggplot(aes(x = b_MuscleTA))+
+  stat_dotsinterval()+
+  theme_classic()+
+  ggtitle("Posterior Distribution; b_MuscleTA")
+
+b.fit.1 %>% spread_draws(b_MuscleTA) %>% 
+  ggplot(aes(x = b_MuscleTA))+
+  stat_halfeye()+
+  theme_classic()+
+  ggtitle("Posterior Distribution; b_MuscleTA")
+```
+
+# 5) Calculate the posterior estimate for the mode/median/mean and hdi/qi. Do you notice any differences?
+
+```{r}
+rbind(b.fit.1 %>% spread_draws(b_MuscleTA) %>% 
+  mode_hdi(.width = 0.95),
+  b.fit.1 %>% spread_draws(b_MuscleTA) %>% 
+  mean_qi(.width = 0.95)) %>% 
+  ggplot(aes(y = .point, x = b_MuscleTA,xmin=.lower,xmax=.upper,color=.point))+
+  geom_pointinterval()+
+  ylab(NULL)+
+  scale_color_discrete(labels = c("mean_qi","mode_hdi"))+
+  ggtitle("Mean_qi and Mode_hdi for b_MuscleTA")
+
+#Mode hdi and Mean qi give similar intervals, but the mode is a bit larger than the mean 
+#in this instance (4.93 vs 4.91) and its interval covers more area on the left side 
+#of the distribution (mode_hdi:[4.776,5.03] vs mean_qi:[4.779,5.036])
+
+rbind(b.fit.1 %>% spread_draws(b_MuscleTA) %>% 
+  mode_hdi(.width = 0.95),
+  b.fit.1 %>% spread_draws(b_MuscleTA) %>% 
+  mean_qi(.width = 0.95)) 
+
+#We can increase the number of iterations to 4000 and see how it impacts our model
+
+```
+
+# 6) How many samples do are there in the posterior? Why are there that many? Run a new model with 4x the samples. What happens to your model?
+
+```{r}
+#Presently, there are 1000 samples (draws) in our posterior because we ran our model 
+#using 1,000 iterations
+b.fit.1 %>% spread_draws(b_MuscleTA)
+tidy_draws(b.fit.1)
+
+b.fit.2 <- brm(family = gaussian,
+               MFR~1+Muscle,data=mfr_data,
+               prior = c(prior(normal(7,3), class = Intercept),
+                       prior(normal(4.9,1.7), class = b),
+                       prior(cauchy(0,1), class = sigma)),
+               iter = 4000, warmup = 500, chains = 2, cores = 2)
+
+#Our model estimates don't seem to change much based on the population-level effects
+summary(b.fit.2)
+summary(b.fit.1)
+
+#We can also examine any differences in distributions
+dat1k <- b.fit.1 %>% spread_draws(b_MuscleTA)
+dat4k <- b.fit.2 %>% spread_draws(b_MuscleTA)
+
+dat1k$iterations <- "1k"
+dat4k$iterations <- "4k"
+
+rbind(dat1k,dat4k) %>% 
+  ggplot(aes(x=b_MuscleTA,color=iterations,fill=iterations))+
+  stat_halfeye(alpha = 0.6)+
+  ggtitle("b_MuscleTA Posteriors w/ 1k vs 4k Iterations")+
+  theme_classic()
+
+#The distribution w/ 4k samples seems a tad narrower
+intervals<-rbind(
+  b.fit.1 %>% spread_draws(b_MuscleTA) %>%  mode_hdi(),
+  b.fit.2 %>% spread_draws(b_MuscleTA) %>% mode_hdi()
+)
+intervals$iter <-c("1k","4k")
+
+#Mode_qi intervals also look similar between 1 and 4k iterations
+intervals
+intervals %>% 
+  ggplot(aes(y = iter, x = b_MuscleTA,xmin=.lower,xmax=.upper,color=iter))+
+  geom_pointinterval()+
+  ylab(NULL)+
+  theme_classic()
+  
+```
+
+# 7) Run a new model with a very different prior. How does this new prior impact the interpretation of the posterior?
+
+```{r}
+#Let's try a beta distribution for our prior instead of a normal distribution
+#Using a beta prior gives us warnings regarding divergent transitions after warmup. 
+#The model coefficients also are vastly different from either other 
+#bayes fits or the lm model (MuscleTA = 1 and Intercept = 9.30)
+b.fit.3 <- brm(family = gaussian,
+               MFR~1+Muscle,data=mfr_data,
+               prior = c(prior(normal(7,3), class = Intercept),
+                       prior(beta(0.5,0.5), class = b),
+                       prior(cauchy(0,1), class = sigma)),
+               iter = 4000, warmup = 500, chains = 2, cores = 2)
+b.fit.3 %>% spread_draws(b_MuscleTA)
+plot(b.fit.3)
+summary(b.fit.3)
+
+#Let's just try a different normal distribution with a mean of 10 and a sd of 5
+#This model runs without any errors or warnings
+b.fit.4 <- brm(family = gaussian,
+               MFR~1+Muscle,data=mfr_data,
+               prior = c(prior(normal(7,3), class = Intercept),
+                       prior(normal(10,5), class = b),
+                       prior(cauchy(0,1), class = sigma)),
+               iter = 4000, warmup = 500, chains = 2, cores = 2)
+b.fit.4 %>% spread_draws(b_MuscleTA)
+plot(b.fit.4)
+summary(b.fit.4)
+
+#The model parameter estimates now match again with what was obtained in the previous bayes fits
+
+b.fit.4 %>% spread_draws(b_MuscleTA) %>% 
+  ggplot(aes(x=b_MuscleTA))+
+  stat_halfeye()+
+  theme_classic()+
+  ggtitle("b_MuscleTA; prior = dnorm(10,5)")
+
+```
+
+# 8) Graph the modeled derived regression line with a confidence band, a prediction band, and the raw data (for categorical predictor see the many options: <http://mjskay.github.io/tidybayes/articles/tidy-brms.html>).
+
+```{r}
+full_join(mfr_data %>% 
+  data_grid(Muscle) %>% 
+  add_epred_draws(b.fit.1),
+  mfr_data %>% data_grid(Muscle) %>% 
+  add_predicted_draws(b.fit.1)) %>% 
+      ggplot() +
+      stat_interval(aes(x = .epred,y=Muscle), .width = 0.95,color="blue",size=15)+
+      stat_interval(aes(x = .prediction,y=Muscle), .width = 0.95,color="red")+
+      geom_point(aes(x=MFR,y=Muscle),data=mfr_data)+
+      xlab("Predicted Mean Firing Rate Values")+
+      annotate(geom="text", label = "95% Confidence Band (.eprid)", x = 15, y =     
+      0.7,color="blue")+
+      annotate(geom="text", label = "95% Prediction Band (.prediction)", x = 15, y =
+      0.55, color="red")+
+      ggtitle("95% Confidence/Prediction Intervals for Fitted MFR Values")+
+      theme_classic()
+  
+
+```

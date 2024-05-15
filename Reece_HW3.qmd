@@ -1,0 +1,262 @@
+---
+title: "Reece Bayes HW-3"
+output: html_document
+---
+
+We will continue to use the mortality dataset from the GLM class for our next homework. 
+
+```{r}
+rm(list=ls())
+
+library(brms)
+library(tidyverse)
+library(modelr)
+library(rstan)
+library(bayestestR)
+library(tidybayes)
+library(see)
+library(marginaleffects)
+library(scales)
+
+setwd("/Users/Tanner/Library/CloudStorage/Box-Box/WUSTL Fall 2024 Courses/Bayes/Homeworks")
+#Reading in data and creating a premature variable
+mortality <- read.csv("https://raw.githubusercontent.com/josh-jackson/bayes/master/static/Lectures/mortality.csv") %>% 
+  mutate(premature = ifelse(NOT.premature == 1,0,1),
+         IQ_c = IQ - mean(IQ),
+         Risky.behavior_c = Risky.behavior - mean(Risky.behavior))
+```
+
+
+1. Run a logistic regression where premature mortality is predicted by risky behavior. Interpret the coefficients in terms of 
+
+```{r}
+#Trying a set of priors
+mod1_prior1 <- brm(family=bernoulli(link="logit"),
+             premature ~ 1 + Risky.behavior_c,
+             prior = c(prior(normal(0,2),class=Intercept),
+                       prior(normal(0,3),class=b)),
+             sample_prior = T,
+             data=mortality,
+             file="HW3_mod1_prior1")
+
+#Prior predictive check for priors 1
+prior_draws(mod1_prior1) %>% 
+  sample_n(size=100) %>% 
+  rownames_to_column("draw") %>% 
+  tidyr::expand(nesting(draw,Intercept,b),Risky.behavior_c = seq_range(mortality$Risky.behavior_c,n=100)) %>% 
+  mutate(prob = inv_logit_scaled(Intercept + b * Risky.behavior_c)) %>% 
+  ggplot(aes(x=Risky.behavior_c,y=prob,group=draw)) +
+  geom_line(alpha=0.4) 
+
+#We can try tighter priors for the slope coefficient
+mod1_prior2 <- brm(family=bernoulli(link="logit"),
+             premature ~ 1 + Risky.behavior_c,
+             prior = c(prior(normal(0,2),class=Intercept),
+                       prior(normal(0,1),class=b)),
+             sample_prior = T,
+             data=mortality,
+             file="HW3_mod1_prior2")
+
+#Prior predictive check for priors 2
+prior_draws(mod1_prior2) %>% 
+  sample_n(size=100) %>% 
+  rownames_to_column("draw") %>% 
+  tidyr::expand(nesting(draw,Intercept,b),Risky.behavior_c = seq_range(mortality$Risky.behavior_c,n=100)) %>% 
+  mutate(prob = inv_logit_scaled(Intercept + b * Risky.behavior_c)) %>% 
+  ggplot(aes(x=Risky.behavior_c,y=prob,group=draw)) +
+  geom_line(alpha=0.4) 
+
+#Let's proceed with prior2
+
+mod1 <- brm(family=bernoulli(link="logit"),
+             premature ~ 1 + Risky.behavior_c,
+             prior = c(prior(normal(0,2),class=Intercept),
+                       prior(normal(0,1),class=b)),
+             #sample_prior = T,
+             data=mortality,
+             iter = 4000, cores = 4, chains = 4,
+             file="HW3_mod1")
+
+
+                       
+
+```
+
+a. Logits
+
+```{r}
+#Below are the fixef coefficients in terms of Logits
+fixef(mod1)
+```
+
+The mean logit value for premature death is -1.68 and occurs at the mean value for Risky.behavior (when Risky.behavior_c = 0). For every unit increase in Risky.behavior_c, we see a corresponding increase in premature death logits of 0.152.
+
+b. Logits converted to odds
+```{r}
+#Converting the coefficients to odds is as simple as exponentiating them. Logits = log(odds)
+fixef(mod1) %>% exp()
+
+```
+
+Now that the coefficients have been exponentiated, the Intercept corresponds to the premature death odds at the mean risky behavior. The Risky.behavior_c coefficient can be interpreted as an odds-ratio. In this model, a 1 unit increase in Risky behavior multiplies the odds of premature death by 1.165.
+
+c. NHST test using a confidence interval of your choosing
+```{r}
+fixef(mod1) %>% exp()
+```
+Looking at the 95% CI for each estimate in odds form, we see that the Intercept (odds at mean Risky behavior) and the odds ratio for Risky.behavior are both "statistically significant" (the intervals do not include the null value of 1).
+
+d. NHST test using Probability of Direction
+```{r}
+p_direction(mod1)
+
+mod1 %>% gather_draws(b_Intercept,b_Risky.behavior_c) %>% 
+  ggplot(aes(y=fct_rev(.variable),x=.value)) +
+  stat_halfeye(.width = c(0.95))
+```
+The probability of direction test is looking at coefficients on the logits scale. With this in mind, 100% of the draws for the Intercept are below the null-value of 0 while 99.9% of draws for the Risky.behavior_c coefficient are above 0.
+
+e. NHST test using ROPE
+```{r}
+rope_1 <- rope(mod1,range = c(-0.05, 0.05))
+rope_1
+plot(rope_1)
+
+equivalence_test(mod1, range = c(-0.05,0.05), ci=c(0.95))
+
+```
+
+0% of the values contained within the 95% CIs for each parameter are also contained in the region of practical equivalence (here defined as -0.05 to 0.05).
+
+f. NHST test using Bayes Factor
+```{r}
+prior_mod1 <- distribution_normal(10000,mean=0,sd=1) %>% as.data.frame() %>% 
+  dplyr::rename('.value' = '.')
+posterior_mod1 <- mod1 %>% gather_draws(b_Risky.behavior_c)
+posterior_mod1 <- posterior_mod1[,5]
+
+bf_1 <- bayesfactor_parameters(posterior_mod1,prior_mod1,direction ="two-sided",null=0)
+plot(bf_1)
+bf_1
+
+```
+The bayes factor of 4.16 suggests moderate evidence for H1 (i.e. risky behavior seems to predict premature death)
+
+2.  Create predicted values for different levels of risky behavior. What is my probability of premature mortality if I was 1 sd deviation below the mean of risky behavior? 2 SDs above? Make sure to include CIs around these estimates. 
+```{r}
+#epred_draws provides predictions already on the response scale
+mortality %>% modelr::data_grid(Risky.behavior_c = c(-1*sd(Risky.behavior_c),2*sd(Risky.behavior_c))) %>% add_epred_draws(mod1) %>% mean_hdi()
+
+```
+Looking at these estimates we see that the expected probability of premature death for someone with risky behavior 1 SD below the mean and 2 SD above the mean are 10.3% (5.90%,15.6%) and 35.1% (20.7%,50.0%), respectively.
+
+3. Graph the predicted relationship between risky behavior and premature mortality with probability as the Y axis.
+```{r}
+mortality %>% data_grid(Risky.behavior_c = seq_range(Risky.behavior_c,n=500)) %>%
+  add_epred_draws(mod1)  %>% 
+  ggplot(aes(x=Risky.behavior_c+mean(mortality$Risky.behavior),y=.epred))+
+  stat_lineribbon(.width = c(0.95), fill ="dodgerblue")+
+  ylab("Predicted Probability of Premature Death")+
+  xlab("Risky Behavior (Plotted along entire Range)")+
+  ggtitle("Probability of Premature Death vs. Risky Behavior")+
+  theme_classic()
+  
+#A similar plot can also be obtained with plot_predictions from marginaleffects
+plot_predictions(mod1,condition="Risky.behavior_c",type="response")
+
+
+```
+4. Run two new models with risky behavior AND IQ as predictors of premature mortality -- one where they are main effects and another where they interact. Calculate psis-loo and waic for these two models and use them to compare with the previous model from #1. Which model is a better model? 
+
+```{r}
+mod2 <- brm(family=bernoulli(link="logit"),
+             premature ~ 1 + Risky.behavior_c+ IQ_c,
+             prior = c(prior(normal(0,2),class=Intercept),
+                       prior(normal(0,1),class=b)),
+             #sample_prior = T,
+             data=mortality,
+             iter = 4000, cores = 4, chains = 4,
+             file="HW3_mod2")
+
+mod2<- add_criterion(mod2,"loo")
+mod2<- add_criterion(mod2,"waic")
+
+
+mod3 <- brm(family=bernoulli(link="logit"),
+             premature ~ 1 + Risky.behavior_c*IQ_c ,
+             prior = c(prior(normal(0,2),class=Intercept),
+                       prior(normal(0,1),class=b)),
+             #sample_prior = T,
+             data=mortality,
+             iter = 4000, cores = 4, chains = 4,
+             file="HW3_mod3")
+
+mod3 <- add_criterion(mod3,"loo")
+mod3 <- add_criterion(mod3, "waic")
+
+mod1 <- add_criterion(mod1,"loo")
+mod1 <- add_criterion(mod1,"waic")
+
+loo_compare(mod1,mod2,mod3,criterion="waic")
+loo_compare(mod1,mod2,mod3,criterion="loo")
+
+```
+Both loo and waic comparisons suggest that model 2 (main effects model) is the best fitting model, although the differences are not all that sizable (<4). It is interesting to note that loo and waic both look exactly the same out to one decimal place. I've read that this is not uncommon with large enough sample size.
+
+
+5. Graph the effect of IQ from the best fitting model in #4. Include both the expected value confidence band and the prediction confidence band.
+```{r}
+#No interaction term indicates we can model the effect of IQ at an arbitrary value of Risky behavior. We'll set it at its mean
+
+mortality %>% data_grid(Risky.behavior_c = 0, IQ_c = seq_range(IQ_c,n=100)) %>% 
+  add_epred_draws(mod2,ndraws=100) %>% 
+  ggplot(aes(y=.epred,x=IQ_c))+
+  stat_lineribbon(.width=0.95,fill="dodgerblue")+
+  geom_dots(data=mortality,aes(x=IQ_c,y=premature,side = ifelse(premature,"bottom","top")),color="black",scale=0.4,pch=19)+
+  theme_classic()
+
+mortality %>% data_grid(Risky.behavior_c = seq_range(Risky.behavior_c,n=100), IQ_c = 0) %>% 
+  add_epred_draws(mod2,ndraws=100) %>% 
+  ggplot(aes(y=.epred,x=Risky.behavior_c))+
+  stat_lineribbon(.width=0.95,fill="dodgerblue")+
+  geom_dots(data=mortality,aes(x=Risky.behavior_c,y=premature,side = ifelse(premature,"bottom","top")),color="black",scale=0.4,pch=19)+
+  theme_classic()
+
+
+
+mortality_predict <- mortality %>% data_grid(Risky.behavior_c = 0, IQ_c = c(-1*sd(IQ_c), 0, sd(IQ_c))) %>% 
+  add_predicted_draws(mod2,ndraws=1000) 
+
+
+mortality_summary <- mortality_predict%>% group_by(IQ_c) %>% dplyr::summarize(prop=mean(.prediction),
+            prop_nice = paste0(label_percent(accuracy = 0.1)(prop), " \nPremature"),
+            lower_quant = quantile(.prediction,prob=0.025))
+mortality_summary
+
+
+
+  ggplot(mortality_predict, aes(x = factor(round(IQ_c,digits=4)), y = .prediction)) +
+  geom_point(position = position_jitter(width = 0.2, height = 0.1, seed = 1234),
+             size = 0.75, alpha = 0.3, color = "dodgerblue") +
+  geom_text(data = mortality_summary, aes(y = 0.5, label = prop_nice), size = 3) +  
+  scale_y_continuous(breaks = c(0, 1), labels = c("Not\nPremature", "Premature")) +
+  labs(x = "IQ_c (-1 to +1 SD)", y = "Prediction of\nPremature Death")+
+  theme_classic()
+
+#Borrowed code from 
+# https://www.andrewheiss.com/blog/2022/09/26/guide-visualizing-types-posteriors/#tldr-diagrams-and-cheat-sheets
+  
+```
+
+6. Create your own version of pp_check on the model in #5 to examine the posterior predictive distribution. Interpret. 
+
+```{r}
+mortality %>% add_predicted_draws(mod2,ndraws=100) %>% 
+  ggplot()+
+  geom_density(aes(x=.prediction,group=.draw),color="dodgerblue",fill=NA)+
+  geom_density(data=mortality,aes(x=premature),color="black",linewidth=1)+
+  theme_classic()
+
+pp_check(mod2,ndraws = 100)
+
+```
