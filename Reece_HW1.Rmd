@@ -20,7 +20,6 @@ library(formatR)
 knitr::opts_knit$set(root.dir = "/Users/Tanner/Library/CloudStorage/Box-Box/SNR Lab/Tanner AnkleCoherence/MFR, TQ, and COVs Data")
 knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 100), tidy = TRUE)
 
-#Test branch comment
 ```
 
 # 1) Plot 2 versions of each of the following distributions...
