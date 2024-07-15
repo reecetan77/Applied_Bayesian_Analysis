@@ -20,7 +20,7 @@ library(formatR)
 knitr::opts_knit$set(root.dir = "/Users/Tanner/Library/CloudStorage/Box-Box/SNR Lab/Tanner AnkleCoherence/MFR, TQ, and COVs Data")
 knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 100), tidy = TRUE)
 
-
+#Test branch comment
 ```
 
 # 1) Plot 2 versions of each of the following distributions...
@@ -35,8 +35,7 @@ x = seq(-10,10,0.01)
                        dof = factor(c(rep("10",length(x)),rep("100",length(x))))))+
   ggtitle("t Distributions")+
   geom_line(aes(x=x,y=t,color=dof))+
-  theme_classic()
-                                      
+  theme_classic()                                    
 ```
 
 ## 1b) Beta Distribution
