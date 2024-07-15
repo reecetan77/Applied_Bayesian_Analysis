@@ -21,6 +21,7 @@ knitr::opts_knit$set(root.dir = "/Users/Tanner/Library/CloudStorage/Box-Box/SNR 
 knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 100), tidy = TRUE)
 
 #Test comment
+#Test comment #2
 ```
 
 # 1) Plot 2 versions of each of the following distributions...
